@@ -1729,14 +1729,5 @@ class DrawingApp:
         return pg.font.Font(type_, size)
 
 if __name__ == "__main__":
-    try:
-        print("Starting application...")
-        app = DrawingApp()
-        print("DrawingApp created successfully")
-        app.run()
-        print("Application finished")
-    except Exception as e:
-        print(f"程序运行出错: {e}")
-        import traceback
-        traceback.print_exc()
-        input("按Enter键退出...")
+    app = DrawingApp()
+    app.run()
