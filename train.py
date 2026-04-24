@@ -42,7 +42,7 @@ class Trainer():
         self.best_val_loss = float('inf')
         torch.compile(self.model)
 
-    def train(self, train_loader, val_loader, trial=None, early_stopping=True):
+    def train(self, train_loader, val_loader, trial=None, early_stopping=True, progress_callback=None, batch_progress_callback=None):
         epoch = 0
         epochs_without_improvement = 0
         best_val_value = float('inf')
@@ -64,6 +64,9 @@ class Trainer():
                 self.optimizer.step()
                 train_loss += loss.item()
                 batch = (i+1, len(self.train_loader))
+
+                if batch_progress_callback and (i + 1) % max(1, len(self.train_loader) // 10) == 0:
+                    batch_progress_callback(epoch + 1, i + 1, len(self.train_loader), train_loss / (i + 1))
 
             train_loss /= len(self.train_loader)
 
@@ -87,6 +90,9 @@ class Trainer():
 
             with open('./log/loss.json', 'w') as f:
                 json.dump(self.loss_dict, f)
+
+            if progress_callback:
+                progress_callback(epoch + 1, train_loss, val_loss, accuracy)
 
             if trial:
                 trial.report(val_loss, epoch)
