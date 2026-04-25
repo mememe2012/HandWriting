@@ -198,11 +198,22 @@ class DrawingApp:
             COLORS['warning'] = "#FFFF00"
 
         self.screen = pg.display.set_mode(SCREEN_SIZE)
-        pg.display.set_caption("手写识别系统")
+#-------------------------------------------------------
+        with open("./index/save_data/config.json", "r") as f:
+            self.config = json.load(f)
+        if 'language' not in self.config:
+            self.config['language'] = 'zh'
+            self._config_('language', 'zh')
+        self.lang = {}
+        with open(f"./index/lang/{self.config['language']}.json", "r", encoding='utf-8') as f:
+            self.lang = json.load(f)
+        self.loading_text(self.lang["loading_config"], 0)
+#-------------------------------------------------------
+        pg.display.set_caption(self.lang["app_title"])
         pg.display.set_icon(pg.image.load("./icon/icon.png"))
         self.clock = pg.time.Clock()
 #-------------------------------------------------------
-        self.loading_text("正在加载组件...")
+        self.loading_text(self.lang["loading_components"], 0)
         self._clear_directory("training_data")
         self._clear_directory("models")
         self._clear_directory("log")
@@ -210,61 +221,50 @@ class DrawingApp:
 #-------------------------------------------------------
         self.logs_info = [] # [{'type','size','text'}]
 #-------------------------------------------------------
-        self.loading_text("正在加载配置...")
-        with open("./index/save_data/config.json", "r") as f:
-            self.config = json.load(f)
-#-------------------------------------------------------
-        self.loading_text("正在加载模型...")
+        self.loading_text(self.lang["loading_model"], 0)
         try:
-            with open(self.config["model_path"], 'rb') as f:
-                zip_ref = zipfile.ZipFile(f)
-                zip_ref.extractall("./models")
-                zip_ref.close()
-
+            self._load_model_with_progress(self.config["model_path"])
         except Exception as er:
-            self.create_info('error', 24, f'模型 {self.config["model_path"]} 加载失败, 已更换为默认模型')
+            self.create_info('error', 24, self.lang["model_load_failed"].format(model_path=self.config["model_path"]))
             self._config_('model_path', './index/save_data/default_model.zip')
-            with open(self.config["model_path"], 'rb') as f:
-                zip_ref = zipfile.ZipFile(f)
-                zip_ref.extractall("./models")
-                zip_ref.close()
+            self._load_model_with_progress(self.config["model_path"])
 
-        with open("./training_data/data.zip" ,"w") as f:pass#创建空文件
+        open("./training_data/data.zip" ,"w")
 
         #重命名文件夹
         #os.rename(f"./models/{os.path.basename(self.config['model_path']).split('.')[0]}", "./models/models")
 #-------------------------------------------------------
         self.board = [[0.0 for _ in range(32)] for _ in range(32)]
-
         self.screen_page = 'main'
         
         font_path = "font/1.ttc"
         self.menu = PygameMenu([
-            ("清空画板", self.clear_board, "清空当前画板"),
-            ("保存数据", self.save, "保存当前画板数据"),
-            ("训练模型", self.trainer, "读取数据并训练模型"),
-            ("显示日志", self.show_log, "显示训练损失和准确率"),
-            ("管理模型", self.manage_model, "管理保存的模型"),
-            ("更多设置", self.more_setting, "更多设置"),
-            ("退出系统", self.quit, "退出系统")
+            (self.lang["clear_board"], self.clear_board, self.lang["clear_board_explain"]),
+            (self.lang["save_data"], self.save, self.lang["save_data_explain"]),
+            (self.lang["train_model"], self.trainer, self.lang["train_model_explain"]),
+            (self.lang["show_log"], self.show_log, self.lang["show_log_explain"]),
+            (self.lang["manage_model"], self.manage_model, self.lang["manage_model_explain"]),
+            (self.lang["more_setting"], self.more_setting, self.lang["more_setting_explain"]),
+            (self.lang["quit_system"], self.quit, self.lang["quit_system_explain"])
         ], font_path=font_path)
 
         self.menu2 = PygameMenu([
-            ("切换主题", self.change_color, "切换颜色主题[暗色/亮色]"),
-            ("测试模型",self.test_model, "测试当前的模型"),
-            ("上一页", self.more_setting, "返回上一页"),
-            ("返回", self.page_back, "返回")
+            (self.lang["switch_theme"], self.change_color, self.lang["switch_theme_explain"]),
+            (self.lang["test_model"],self.test_model, self.lang["test_model_explain"]),
+            (self.lang["switch_language"], self.switch_language, self.lang["switch_language_explain"]),
+            (self.lang["previous_page"], self.more_setting, self.lang["previous_page_explain"]),
+            (self.lang["back"], self.page_back, self.lang["back_explain"])
         ], font_path=font_path)
 
         self.menu3 = PygameMenu([
-            ("返回", self.page_back, "返回")
+            (self.lang["back"], self.page_back, self.lang["back_explain"])
         ], font_path=font_path)
 
         self.menu4 = PygameMenu([
-            ("选择模型", self.select_model, "选择模型"),
-            ("删除模型", self.delete_model, "删除模型"),
-            ("默认模型", self.default_model, "恢复默认模型"),
-            ("返回", self.page_back, "返回")
+            (self.lang["select_model"], self.select_model, self.lang["select_model_explain"]),
+            (self.lang["delete_model"], self.delete_model, self.lang["delete_model_explain"]),
+            (self.lang["default_model"], self.default_model, self.lang["default_model_explain"]),
+            (self.lang["back"], self.page_back, self.lang["back_explain"])
         ], font_path=font_path)
         
         try:self.status_font = pg.font.Font(font_path, 24)
@@ -323,8 +323,19 @@ class DrawingApp:
 
         self.last_draw_pos = None
 
-        if torch.cuda.is_available():self.device = torch.device("cuda")
-        else:self.device = torch.device("cpu")
+        self.is_training = False
+        self.training_progress = 0.0  # 0.0 to 1.0
+        self.current_epoch = 0
+        self.total_batches = 0
+        self.current_batch = 0
+        self.current_train_loss = 0.0
+
+        if torch.cuda.is_available():
+            self.device = 'cuda:0'
+        elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+            self.device = 'xpu:0'
+        else:
+            self.device = 'cpu'
 #-------------------------------------------------------
         self.thread = threading.Thread(target=self.get_CPU_usepercent)
         self.thread.daemon = True
@@ -332,7 +343,9 @@ class DrawingApp:
         
         self.init_model()
 #-------------------------------------------------------
-        self.create_info('correct', 24, '初始化成功')
+        self.loading_text(self.lang["init_complete"], 1.0)
+        self.create_info('correct', 24, self.lang['init_success'])
+        
 
     def clear_board(self):
         self.board = [[0.0 for _ in range(32)] for _ in range(32)]
@@ -342,19 +355,15 @@ class DrawingApp:
 
     def select_model(self):
         if self.current_model_selection >= 0 and self.current_model_selection < len(self.model_list):
-            selected_model = self.model_list[self.current_model_selection]
+            selected_model = self.model_list[self.current_model_selection][0]
             model_path = f"./save_model/{selected_model}"
             self._config_('model_path', model_path)
             
             try:
-                self._clear_directory("models/models")
-                with open(model_path, 'rb') as f:
-                    zip_ref = zipfile.ZipFile(f)
-                    zip_ref.extractall("./models")
-                    zip_ref.close()
+                self._load_model_with_progress(model_path,init=False)
                 
                 self.init_model()
-                self.create_info('correct', 24, f'已切换到模型: {selected_model}')
+                self.create_info('correct', 24, self.lang['switched_to_model'].format(selected_model=selected_model))
                 
                 input_box.message_box(
                     text=f"已成功切换到模型: {selected_model}",
@@ -363,7 +372,7 @@ class DrawingApp:
                     color='green'
                 )
             except Exception as e:
-                self.create_info('error', 24, f'模型加载失败: {str(e)}')
+                self.create_info('error', 24, self.lang['model_load_error'].format(error=str(e)))
                 input_box.message_box(
                     text=f"模型加载失败: {str(e)}",
                     title="错误",
@@ -380,7 +389,7 @@ class DrawingApp:
 
     def delete_model(self):
         if self.current_model_selection >= 0 and self.current_model_selection < len(self.model_list):
-            selected_model = self.model_list[self.current_model_selection]
+            selected_model = self.model_list[self.current_model_selection][0]
             model_path = f"./save_model/{selected_model}"
             
             confirm = input_box.choose_box(
@@ -397,7 +406,7 @@ class DrawingApp:
                     os.remove(model_path)
                     self.model_list.pop(self.current_model_selection)
                     self.current_model_selection = -1
-                    self.create_info('correct', 24, f'已删除模型: {selected_model}')
+                    self.create_info('correct', 24, self.lang['model_deleted'].format(selected_model=selected_model))
                     
                     input_box.message_box(
                         text=f"已成功删除模型: {selected_model}",
@@ -406,7 +415,7 @@ class DrawingApp:
                         color='green'
                     )
                 except Exception as e:
-                    self.create_info('error', 24, f'删除失败: {str(e)}')
+                    self.create_info('error', 24, self.lang['delete_failed'].format(error=str(e)))
                     input_box.message_box(
                         text=f"删除失败: {str(e)}",
                         title="错误",
@@ -434,14 +443,10 @@ class DrawingApp:
         if confirm:
             try:
                 self._config_('model_path', './index/save_data/default_model.zip')
-                self._clear_directory("models")
-                with open(self.config["model_path"], 'rb') as f:
-                    zip_ref = zipfile.ZipFile(f)
-                    zip_ref.extractall("./models")
-                    zip_ref.close()
+                self._load_model_with_progress('./index/save_data/default_model.zip',init=False)
                 
                 self.init_model()
-                self.create_info('correct', 24, '已恢复默认模型')
+                self.create_info('correct', 24, self.lang['default_model_restored'])
                 
                 input_box.message_box(
                     text="已成功恢复默认模型",
@@ -450,7 +455,7 @@ class DrawingApp:
                     color='green'
                 )
             except Exception as e:
-                self.create_info('error', 24, f'恢复默认模型失败: {str(e)}')
+                self.create_info('error', 24, self.lang['restore_default_failed'].format(error=str(e)))
                 input_box.message_box(
                     text=f"恢复默认模型失败: {str(e)}",
                     title="错误",
@@ -471,23 +476,79 @@ class DrawingApp:
             self.val_loss_data = []
             self.val_acc_data = []
 
-    def loading_text(self, text):
+    def loading_text(self, text, progress=None, init=True):
         self.screen.fill(COLORS['background'])
         text_surf = self.font_(24).render(text, True, COLORS['text'])
         self.screen.blit(text_surf, (100, 100))
-        if self.screen_config['default_screen'] == "True":logo = pg.image.load(ICONS["team_logo"][0])
-        else:logo = pg.image.load(ICONS["team_logo"][1])
-        self.screen.blit(logo, (100, 200))
-        icon = pg.image.load(ICONS["icon"])
-        self.screen.blit(icon, (100, 300))
+
+        if init:
+        
+            if hasattr(self, 'screen_config') and self.screen_config['default_screen'] == "True":
+                logo = pg.image.load(ICONS["team_logo"][0])
+            else:
+                logo = pg.image.load(ICONS["team_logo"][1])
+        
+            self.screen.blit(logo, (100, 200))
+            icon = pg.image.load(ICONS["icon"])
+            self.screen.blit(icon, (100, 300))
+        
+        if progress is not None:
+            if init:bar_x, bar_y = 100, 600
+            else:bar_x, bar_y = 100, 300
+            bar_width, bar_height = 400, 20
+            pg.draw.rect(self.screen, COLORS['button'], (bar_x, bar_y, bar_width, bar_height))
+
+            fill_width = int(bar_width * progress)
+            pg.draw.rect(self.screen, COLORS['correct'], (bar_x, bar_y, fill_width, bar_height))
+
+            pg.draw.rect(self.screen, COLORS['text'], (bar_x, bar_y, bar_width, bar_height), 1)
+
+            progress_text = f"{progress*100:.1f}%"
+            progress_surf = self.font_(16).render(progress_text, True, COLORS['text'])
+            progress_rect = progress_surf.get_rect(center=(bar_x + bar_width // 2, bar_y + bar_height // 2))
+            self.screen.blit(progress_surf, progress_rect)
+        
         pg.display.update()
+        
+        for event in pg.event.get():
+            if event.type == pg.QUIT:
+                self.quit()
+
+    def _load_model_with_progress(self, model_path, init=True):
+        try:self._clear_directory("models")
+        except:pass
+        with open(model_path, 'rb') as f:
+            zip_ref = zipfile.ZipFile(f)
+            file_list = zip_ref.namelist()
+            
+            total_size = sum(zip_ref.getinfo(file_name).file_size for file_name in file_list)
+            extracted_size = 0
+            
+            for file_name in file_list:
+                file_info = zip_ref.getinfo(file_name)
+                # 确保目标目录存在
+                target_dir = os.path.join("./models", os.path.dirname(file_name))
+                if not os.path.exists(target_dir):
+                    os.makedirs(target_dir)
+                
+                with zip_ref.open(file_name) as source, open(os.path.join("./models", file_name), "wb") as target:
+                    # 使用 shutil.copyfileobj 进行解压，并实时更新进度
+                    buffer_size = int(1024*1024*0.2)
+                    while True:
+                        buffer = source.read(buffer_size)
+                        if not buffer:
+                            break
+                        target.write(buffer)
+                        extracted_size += len(buffer)
+                        
+                        # 更新进度
+                        progress = (extracted_size / total_size) if total_size > 0 else 1.0
+                        self.loading_text(self.lang["loading_model_progress"].format(extracted_size=self.show_file_size(extracted_size), total_size=self.show_file_size(total_size)), progress, init=init)
+            
+            zip_ref.close()
 
     def draw_line_chart(self, surface, data_list, x, y, width, height, 
                        title="", y_min=0, y_max=100, color=(255, 255, 255)):
-        if not data_list:
-            return
-        
-        pg.draw.rect(surface, COLORS['text'], (x, y, width, height), 2)
         
         if title:
             title_surf = self.font_(16).render(title, True, COLORS['text'])
@@ -543,8 +604,17 @@ class DrawingApp:
         if torch.cuda.is_available():torch.cuda.empty_cache()
         self.root.destroy()
         pg.quit()
+        clean_thread = threading.Thread(target=self.clean_temp)
+        clean_thread.start()
         sys.exit()
 
+    def clean_temp(self):
+        temp_list = ["models","training_data","log","index/%temp%","__pycache__"]
+        for temp in temp_list:
+            try:
+                shutil.rmtree(temp)
+            except Exception as e:
+                print(f"Failed to delete {temp}. Reason: {e}")
 
     def change_color(self):
         if self.screen_config['default_screen'] == "True":
@@ -553,7 +623,7 @@ class DrawingApp:
             self.screen_config['default_screen'] = "True"
         with open("./index/screen_config.json", "w") as f:
             json.dump(self.screen_config, f)
-        self.create_info('correct', 24, '颜色设置已保存')
+        self.create_info('correct', 24, self.lang['color_settings_saved'])
 
         for color in list(COLORS.keys())[:-3]:
             COLORS[color] = (255-COLORS[color][0], 255-COLORS[color][1], 255-COLORS[color][2])
@@ -566,24 +636,66 @@ class DrawingApp:
             COLORS['correct'] = "#00FF00"
             COLORS['error'] = "#FF0000"
             COLORS['warning'] = "#FFFF00"
-        
+
+    def switch_language(self):
+        langs = ['zh', 'en']
+        current = langs.index(self.config['language'])
+        next_lang = langs[(current + 1) % len(langs)]
+        self._config_('language', next_lang)
+        with open(f"./index/lang/{next_lang}.json", "r", encoding='utf-8') as f:
+            self.lang = json.load(f)
+        # 重新创建菜单
+        font_path = "font/1.ttc"
+        self.menu = PygameMenu([
+            (self.lang["clear_board"], self.clear_board, self.lang["clear_board_explain"]),
+            (self.lang["save_data"], self.save, self.lang["save_data_explain"]),
+            (self.lang["train_model"], self.trainer, self.lang["train_model_explain"]),
+            (self.lang["show_log"], self.show_log, self.lang["show_log_explain"]),
+            (self.lang["manage_model"], self.manage_model, self.lang["manage_model_explain"]),
+            (self.lang["more_setting"], self.more_setting, self.lang["more_setting_explain"]),
+            (self.lang["quit_system"], self.quit, self.lang["quit_system_explain"])
+        ], font_path=font_path)
+
+        self.menu2 = PygameMenu([
+            (self.lang["switch_theme"], self.change_color, self.lang["switch_theme_explain"]),
+            (self.lang["test_model"],self.test_model, self.lang["test_model_explain"]),
+            (self.lang["switch_language"], self.switch_language, self.lang["switch_language_explain"]),
+            (self.lang["previous_page"], self.more_setting, self.lang["previous_page_explain"]),
+            (self.lang["back"], self.page_back, self.lang["back_explain"])
+        ], font_path=font_path)
+
+        self.menu3 = PygameMenu([
+            (self.lang["back"], self.page_back, self.lang["back_explain"])
+        ], font_path=font_path)
+
+        self.menu4 = PygameMenu([
+            (self.lang["select_model"], self.select_model, self.lang["select_model_explain"]),
+            (self.lang["delete_model"], self.delete_model, self.lang["delete_model_explain"]),
+            (self.lang["default_model"], self.default_model, self.lang["default_model_explain"]),
+            (self.lang["back"], self.page_back, self.lang["back_explain"])
+        ], font_path=font_path)
+        self.screen_page = 'set'
+        self.create_info('correct', 24, self.lang['language_switched'])
+        pg.display.set_caption(self.lang["app_title"])
+        print("FINISH SWITCH LANGUAGE")
+
     def _config_(self, key, value):
         self.config[key] = value
         with open("./index/save_data/config.json", "w") as f:
             json.dump(self.config, f)
 
-    def lock_screen(self):
-        screen_locker = pg.rect.Rect(0, 0, *SCREEN_SIZE)
-        text = self.big_status_font.render("屏幕已锁定", True, COLORS['text'])
-        pg.draw.rect(self.screen, COLORS['background'], screen_locker)
-        self.screen.blit(text, (100, 100))
-        pg.display.update()
-
-    def unlock_screen(self):pg.display.update()
     def get_CPU_usepercent(self):
         while True:self.CPU_usepercent = [i for i in self.CPU_usepercent[1:]]+[psutil.cpu_percent(interval=1)]
     def show_log(self):self.screen_page = 'log'
     def create_info(self, type, size, text):self.logs_info.append({'type':type,'size':size,'text':f'[{time.strftime("%H:%M:%S", time.localtime())}]{text}'})
+    def progress_callback(self, epoch, train_loss, val_loss, val_acc):self.create_info('correct', 24, self.lang['epoch_info'].format(epoch=epoch, train_loss=train_loss, val_loss=val_loss, val_acc=val_acc))
+
+    def batch_progress_callback(self, epoch, current_batch, total_batches, current_loss):
+        self.current_epoch = epoch
+        self.current_batch = current_batch
+        self.total_batches = total_batches
+        self.current_train_loss = current_loss
+        self.training_progress = current_batch / total_batches
 
     def augment_board(self, board, num_augmentations=63):
         image = Image.new('L', (32, 32))
@@ -653,12 +765,12 @@ class DrawingApp:
                     bytes_io.seek(0)
                     zip_ref.writestr(name, bytes_io.read())
             
-            self.create_info('correct', 24, f'保存 {label} 标签数据成功 新增了{len(augmented_boards)+1}个训练数据')
+            self.create_info('correct', 24, self.lang['save_data_success'].format(label=label, new_data_count=len(augmented_boards)+1))
                 
             try:
-                self.create_info('warning', 24, f'数据总大小 {self.show_file_size(os.path.getsize("training_data/data.zip"))}')
+                self.create_info('warning', 24, self.lang['data_total_size'].format(size=self.show_file_size(os.path.getsize("training_data/data.zip"))))
             except:
-                self.create_info('error', 24, f'数据大小读取失败')
+                self.create_info('error', 24, self.lang['data_size_read_failed'])
                                     
             input_box.message_box(
                 text=f"保存 {label} 标签数据成功",
@@ -723,6 +835,8 @@ class DrawingApp:
 
                     if (self.name_ + ".zip") not in os.listdir("save_model"):
                         if self.name_:
+                            self.is_training = True
+                            self.training_progress = 0.0
                             p = threading.Thread(target=self.train)
                             p.daemon = True
                             p.start()
@@ -766,7 +880,7 @@ class DrawingApp:
             except zipfile.BadZipFile:pass
             
             min_file_count = min(min_file_count, min(c.values()))
-            self.create_info('correct', 24, f'训练数据最少数量：{min_file_count}')
+            self.create_info('correct', 24, self.lang['min_train_data_count'].format(count=min_file_count))
 
             # 读取训练数据
             try:
@@ -784,19 +898,19 @@ class DrawingApp:
                 with zipfile.ZipFile(path, 'r') as zip_ref:
                     for i, file in enumerate(zip_ref.namelist()):
                         label = self.name_tolabel(file.split("/")[-1])
-                        if i % (min_file_count // 3) == 1:self.create_info('correct', 24, f'读取训练数据 {file}')
+                        if i % (min_file_count // 3) == 1:self.create_info('correct', 24, self.lang['reading_train_data'].format(file=file))
                         if label not in data:
                             data[label] = []
                         if data[label] and len(data[label]) >= min_file_count:continue
                         data[label].append(self.image_tolist(Image.open(zip_ref.open(file))))
 
             if not data:raise zipfile.BadZipFile("No training data found.")
-            self.create_info('correct', 24, f'训练数据读取成功')
+            self.create_info('correct', 24, self.lang['train_data_read_success'])
             
             with open("./log/loss.json", "w") as f:
                 json.dump({"trainLoss":[], "valLoss":[], "valAcc":[]}, f)
 
-            self.create_info('correct', 24, '开始训练模型')
+            self.create_info('correct', 24, self.lang['start_training'])
 
             start_time = time.time()
 
@@ -813,21 +927,32 @@ class DrawingApp:
 
             ans_t = torch.tensor(ans_).float().view(-1, 1, 32, 32)
             label_t = torch.tensor(label_).long()
-            self.create_info('correct', 24, f'数据准备完成')
+            self.create_info('correct', 24, self.lang['data_prep_complete'])
 
             dataset_balanced = TensorDataset(ans_t, label_t)
             train_size = int(0.8 * len(dataset_balanced))
             val_size = len(dataset_balanced) - train_size
             self.train_dataset, self.val_dataset = random_split(dataset_balanced, [train_size, val_size])
 
+            if self.device == "cuda":memory_size = torch.cuda.get_device_properties(self.device).total_memory
+            # get memory size
+            else:memory_size = psutil.virtual_memory().available
+            # 计算每个批次的大小，使得每个批次的大小小于剩余内存
+            batch_size = int(memory_size / (32 * 32 * 4 * 2))
+            batch_size = min(self.batch_size, 128)
+            batch_size = max(self.batch_size, 16)
+            # 根据样本数量调整批次大小，确保至少有4个批次
+            batch_size = min(batch_size, len(self.train_dataset) // 4)
+            self.batch_size = batch_size
+
             self.train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)  # 使用相同的批次大小
             self.val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, drop_last=True)  # 使用相同的批次大小
 
-            self.create_info('correct', 24, f'训练集大小：{len(self.train_dataset)}')
-            self.create_info('correct', 24, f'验证集大小：{len(self.val_dataset)}')
-            self.create_info('correct', 24, f'批次大小：{self.batch_size}')
-            self.create_info('correct', 24, f'输出大小：{output_size}')
-            self.create_info('correct', 24, f'处理器：{self.device}')
+            self.create_info('correct', 24, self.lang['train_set_size'].format(size=len(self.train_dataset)))
+            self.create_info('correct', 24, self.lang['val_set_size'].format(size=len(self.val_dataset)))
+            self.create_info('correct', 24, self.lang['batch_size_info'].format(size=self.batch_size))
+            self.create_info('correct', 24, self.lang['output_size'].format(size=output_size))
+            self.create_info('correct', 24, self.lang['device_info'].format(device=self.device))
 
             self.end_ = False
 
@@ -841,7 +966,9 @@ class DrawingApp:
             self.create_info('correct', 24, f'开始训练模型')
             self.init__.train( self.train_loader,
                             self.val_loader, 
-                            early_stopping=True, 
+                            early_stopping=True,
+                            progress_callback=self.progress_callback,
+                            batch_progress_callback=self.batch_progress_callback
                             )
 
             with open("./models/label.json", "w") as f:
@@ -860,6 +987,7 @@ class DrawingApp:
             end_time = time.time()
             self.create_info('correct', 24, f'训练模型完成，用时{end_time-start_time:.2f}秒')
             self.create_info('correct', 24, f'模型保存成功')
+            self.is_training = False
         
         except zipfile.BadZipFile as er:
             self.create_info('error', 24, f'训练数据不存在|{er}')
@@ -909,6 +1037,21 @@ class DrawingApp:
         percentage = self.font_(14).render(f"{round(program*100,2)}%", True, COLORS['text'])
         percentage_rect = percentage.get_rect(center=(x+128/2, y+8))
         self.screen.blit(percentage, percentage_rect)
+    
+    def draw_training_progress(self):
+        bar_x, bar_y = 550, 350
+        bar_width, bar_height = 400, 30
+        
+        pg.draw.rect(self.screen, COLORS['button'], (bar_x, bar_y, bar_width, bar_height))
+        
+        fill_width = int(bar_width * self.training_progress)
+        pg.draw.rect(self.screen, COLORS['correct'], (bar_x, bar_y, fill_width, bar_height))
+        
+        pg.draw.rect(self.screen, COLORS['text'], (bar_x, bar_y, bar_width, bar_height), 2)
+        
+        progress_text = f"训练进度 - Epoch {self.current_epoch}: {self.current_batch}/{self.total_batches} ({self.training_progress*100:.1f}%) Loss: {self.current_train_loss:.3f}"
+        text_surf = self.font_(16).render(progress_text, True, COLORS['text'])
+        self.screen.blit(text_surf, (bar_x, bar_y - 35))
 
     def init_model(self):
         with open("./models/models/label.json", "r") as f:
@@ -917,11 +1060,15 @@ class DrawingApp:
         self.use_ = nn.Trainer(device=self.device, output_size=output_size)
         self.use_.load_model('./models/models/model.pth')
 
+    def value_count(self, output_size):
+        return 8655908 + 513*output_size
+
     def run(self):
         running = True
         self.ticks = -1
         while running:
-            try:
+            if True:
+            #try:
                 self.ticks += 1
                 
                 if self.ticks == 0:self.load_loss_data()
@@ -986,7 +1133,7 @@ class DrawingApp:
                     self.percent_label = self.status_font.render(f"置信度: {round(max(soft_out)*100,2)}%", True, COLORS['text'])
                     self.percent_label_rect = self.percent_label.get_rect(center=(650, 200))
                     self.screen.blit(self.percent_label, self.percent_label_rect)
-                    
+
                     self.menu.draw(self.screen)
                     
                     for event in pg.event.get():
@@ -1027,6 +1174,9 @@ class DrawingApp:
                     self.menu3.draw(self.screen)
                     self.log_sys = Pygamelog(self.screen, self.logs_info, 10, 550, 32, 7, font_path='./font/2.ttc')
                     
+                    if self.is_training:
+                        self.draw_training_progress()
+
                     self.draw_line_chart(
                         self.screen,
                         self.CPU_usepercent,
@@ -1102,8 +1252,8 @@ class DrawingApp:
                     if not os.path.exists(model_dir):
                         os.makedirs(model_dir, exist_ok=True)
                     
-                    self.model_list = [f for f in os.listdir(model_dir) if f.endswith(".zip")]
-                    self.model_list.sort()
+                    self.model_list = [(f, len(json.load(zipfile.ZipFile(os.path.join(model_dir, f), "r").open("models/label.json")))) for f in os.listdir(model_dir) if f.endswith(".zip")]
+
                     
                     title = self.font_(32).render("模型管理", True, COLORS['text'])
                     self.screen.blit(title, (50, 50))
@@ -1124,7 +1274,8 @@ class DrawingApp:
                         if idx >= len(self.model_list):
                             break
                             
-                        model_name = self.model_list[idx]
+                        model_name = self.model_list[idx][0]
+                        output_size = self.model_list[idx][1]
                         item_rect = pg.Rect(55, start_y + i*self.item_height, 690, self.item_height-5)
                         
                         bg_color = COLORS['highlight'] if idx == self.current_model_selection else COLORS['button']
@@ -1138,7 +1289,7 @@ class DrawingApp:
                         try:
                             model_path = os.path.join(model_dir, model_name)
                             size = os.path.getsize(model_path)
-                            size_text = self.show_file_size(size)
+                            size_text = f"{self.show_file_size(size)} | {self.value_count(output_size)} " + self.lang['parameter_count']
                             size_surface = self.font_(14).render(size_text, True, COLORS['text'])
                             self.screen.blit(size_surface, (item_rect.x+400, item_rect.y+7))
                         except:
@@ -1383,8 +1534,8 @@ class DrawingApp:
                     
                     self.menu2.draw(self.screen)
 
-            except Exception as error:
-                self.create_info('error', 24, f'程序出错|{error}')
+            #except Exception as error:
+            #    self.create_info('error', 24, f'程序出错|{error}')
 
             pg.display.flip()
             self.clock.tick(120)
