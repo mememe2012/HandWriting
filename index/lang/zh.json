@@ -60,5 +60,6 @@
     "val_set_size": "验证集大小：{size}",
     "batch_size_info": "批次大小：{size}",
     "output_size": "输出大小：{size}",
-    "device_info": "处理器：{device}"
+    "device_info": "处理器：{device}",
+    "parameter_count": "参数数量"
 }

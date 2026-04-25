@@ -207,13 +207,13 @@ class DrawingApp:
         self.lang = {}
         with open(f"./index/lang/{self.config['language']}.json", "r", encoding='utf-8') as f:
             self.lang = json.load(f)
-        self.loading_text(self.lang["loading_config"], 0.2)
+        self.loading_text(self.lang["loading_config"], 0)
 #-------------------------------------------------------
         pg.display.set_caption(self.lang["app_title"])
         pg.display.set_icon(pg.image.load("./icon/icon.png"))
         self.clock = pg.time.Clock()
 #-------------------------------------------------------
-        self.loading_text(self.lang["loading_components"], 0.5)
+        self.loading_text(self.lang["loading_components"], 0)
         self._clear_directory("training_data")
         self._clear_directory("models")
         self._clear_directory("log")
@@ -221,7 +221,7 @@ class DrawingApp:
 #-------------------------------------------------------
         self.logs_info = [] # [{'type','size','text'}]
 #-------------------------------------------------------
-        self.loading_text(self.lang["loading_model"], 0.8)
+        self.loading_text(self.lang["loading_model"], 0)
         try:
             self._load_model_with_progress(self.config["model_path"])
         except Exception as er:
@@ -330,8 +330,12 @@ class DrawingApp:
         self.current_batch = 0
         self.current_train_loss = 0.0
 
-        if torch.cuda.is_available():self.device = torch.device("cuda")
-        else:self.device = torch.device("cpu")
+        if torch.cuda.is_available():
+            self.device = 'cuda:0'
+        elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+            self.device = 'xpu:0'
+        else:
+            self.device = 'cpu'
 #-------------------------------------------------------
         self.thread = threading.Thread(target=self.get_CPU_usepercent)
         self.thread.daemon = True
@@ -351,7 +355,7 @@ class DrawingApp:
 
     def select_model(self):
         if self.current_model_selection >= 0 and self.current_model_selection < len(self.model_list):
-            selected_model = self.model_list[self.current_model_selection]
+            selected_model = self.model_list[self.current_model_selection][0]
             model_path = f"./save_model/{selected_model}"
             self._config_('model_path', model_path)
             
@@ -385,7 +389,7 @@ class DrawingApp:
 
     def delete_model(self):
         if self.current_model_selection >= 0 and self.current_model_selection < len(self.model_list):
-            selected_model = self.model_list[self.current_model_selection]
+            selected_model = self.model_list[self.current_model_selection][0]
             model_path = f"./save_model/{selected_model}"
             
             confirm = input_box.choose_box(
@@ -439,11 +443,7 @@ class DrawingApp:
         if confirm:
             try:
                 self._config_('model_path', './index/save_data/default_model.zip')
-                self._clear_directory("models")
-                with open(self.config["model_path"], 'rb') as f:
-                    zip_ref = zipfile.ZipFile(f)
-                    zip_ref.extractall("./models")
-                    zip_ref.close()
+                self._load_model_with_progress('./index/save_data/default_model.zip',init=False)
                 
                 self.init_model()
                 self.create_info('correct', 24, self.lang['default_model_restored'])
@@ -515,6 +515,8 @@ class DrawingApp:
                 self.quit()
 
     def _load_model_with_progress(self, model_path, init=True):
+        try:self._clear_directory("models")
+        except:pass
         with open(model_path, 'rb') as f:
             zip_ref = zipfile.ZipFile(f)
             file_list = zip_ref.namelist()
@@ -540,8 +542,7 @@ class DrawingApp:
                         extracted_size += len(buffer)
                         
                         # 更新进度
-                        if init:progress = 0.8 + (extracted_size / total_size) * 0.2 if total_size > 0 else 1.0
-                        else:progress = (extracted_size / total_size) if total_size > 0 else 1.0
+                        progress = (extracted_size / total_size) if total_size > 0 else 1.0
                         self.loading_text(self.lang["loading_model_progress"].format(extracted_size=self.show_file_size(extracted_size), total_size=self.show_file_size(total_size)), progress, init=init)
             
             zip_ref.close()
@@ -673,30 +674,21 @@ class DrawingApp:
             (self.lang["default_model"], self.default_model, self.lang["default_model_explain"]),
             (self.lang["back"], self.page_back, self.lang["back_explain"])
         ], font_path=font_path)
-        self.screen_page = 'settings'
+        self.screen_page = 'set'
         self.create_info('correct', 24, self.lang['language_switched'])
         pg.display.set_caption(self.lang["app_title"])
+        print("FINISH SWITCH LANGUAGE")
 
     def _config_(self, key, value):
         self.config[key] = value
         with open("./index/save_data/config.json", "w") as f:
             json.dump(self.config, f)
 
-    def lock_screen(self):
-        screen_locker = pg.rect.Rect(0, 0, *SCREEN_SIZE)
-        text = self.big_status_font.render(self.lang["screen_locked"], True, COLORS['text'])
-        pg.draw.rect(self.screen, COLORS['background'], screen_locker)
-        self.screen.blit(text, (100, 100))
-        pg.display.update()
-
-    def unlock_screen(self):pg.display.update()
     def get_CPU_usepercent(self):
         while True:self.CPU_usepercent = [i for i in self.CPU_usepercent[1:]]+[psutil.cpu_percent(interval=1)]
     def show_log(self):self.screen_page = 'log'
     def create_info(self, type, size, text):self.logs_info.append({'type':type,'size':size,'text':f'[{time.strftime("%H:%M:%S", time.localtime())}]{text}'})
-
-    def progress_callback(self, epoch, train_loss, val_loss, val_acc):
-        self.create_info('correct', 24, self.lang['epoch_info'].format(epoch=epoch, train_loss=train_loss, val_loss=val_loss, val_acc=val_acc))
+    def progress_callback(self, epoch, train_loss, val_loss, val_acc):self.create_info('correct', 24, self.lang['epoch_info'].format(epoch=epoch, train_loss=train_loss, val_loss=val_loss, val_acc=val_acc))
 
     def batch_progress_callback(self, epoch, current_batch, total_batches, current_loss):
         self.current_epoch = epoch
@@ -942,6 +934,17 @@ class DrawingApp:
             val_size = len(dataset_balanced) - train_size
             self.train_dataset, self.val_dataset = random_split(dataset_balanced, [train_size, val_size])
 
+            if self.device == "cuda":memory_size = torch.cuda.get_device_properties(self.device).total_memory
+            # get memory size
+            else:memory_size = psutil.virtual_memory().available
+            # 计算每个批次的大小，使得每个批次的大小小于剩余内存
+            batch_size = int(memory_size / (32 * 32 * 4 * 2))
+            batch_size = min(self.batch_size, 128)
+            batch_size = max(self.batch_size, 16)
+            # 根据样本数量调整批次大小，确保至少有4个批次
+            batch_size = min(batch_size, len(self.train_dataset) // 4)
+            self.batch_size = batch_size
+
             self.train_loader = DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)  # 使用相同的批次大小
             self.val_loader = DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False, drop_last=True)  # 使用相同的批次大小
 
@@ -1036,7 +1039,7 @@ class DrawingApp:
         self.screen.blit(percentage, percentage_rect)
     
     def draw_training_progress(self):
-        bar_x, bar_y = 550, 650
+        bar_x, bar_y = 550, 350
         bar_width, bar_height = 400, 30
         
         pg.draw.rect(self.screen, COLORS['button'], (bar_x, bar_y, bar_width, bar_height))
@@ -1056,6 +1059,9 @@ class DrawingApp:
             output_size = len(_label_)
         self.use_ = nn.Trainer(device=self.device, output_size=output_size)
         self.use_.load_model('./models/models/model.pth')
+
+    def value_count(self, output_size):
+        return 8655908 + 513*output_size
 
     def run(self):
         running = True
@@ -1246,8 +1252,8 @@ class DrawingApp:
                     if not os.path.exists(model_dir):
                         os.makedirs(model_dir, exist_ok=True)
                     
-                    self.model_list = [f for f in os.listdir(model_dir) if f.endswith(".zip")]
-                    self.model_list.sort()
+                    self.model_list = [(f, len(json.load(zipfile.ZipFile(os.path.join(model_dir, f), "r").open("models/label.json")))) for f in os.listdir(model_dir) if f.endswith(".zip")]
+
                     
                     title = self.font_(32).render("模型管理", True, COLORS['text'])
                     self.screen.blit(title, (50, 50))
@@ -1268,7 +1274,8 @@ class DrawingApp:
                         if idx >= len(self.model_list):
                             break
                             
-                        model_name = self.model_list[idx]
+                        model_name = self.model_list[idx][0]
+                        output_size = self.model_list[idx][1]
                         item_rect = pg.Rect(55, start_y + i*self.item_height, 690, self.item_height-5)
                         
                         bg_color = COLORS['highlight'] if idx == self.current_model_selection else COLORS['button']
@@ -1282,7 +1289,7 @@ class DrawingApp:
                         try:
                             model_path = os.path.join(model_dir, model_name)
                             size = os.path.getsize(model_path)
-                            size_text = self.show_file_size(size)
+                            size_text = f"{self.show_file_size(size)} | {self.value_count(output_size)} " + self.lang['parameter_count']
                             size_surface = self.font_(14).render(size_text, True, COLORS['text'])
                             self.screen.blit(size_surface, (item_rect.x+400, item_rect.y+7))
                         except:

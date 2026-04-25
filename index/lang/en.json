@@ -60,5 +60,6 @@
     "val_set_size": "Validation set size: {size}",
     "batch_size_info": "Batch size: {size}",
     "output_size": "Output size: {size}",
-    "device_info": "Device: {device}"
+    "device_info": "Device: {device}",
+    "parameter_count": "Parameter count"
 }

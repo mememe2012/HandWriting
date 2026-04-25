@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import json
 from torch.cuda.amp import GradScaler
+from contextlib import nullcontext
 
 class ConvNet(nn.Module):
     def __init__(self, output_size=10, dropout_prob=0.2):
@@ -31,15 +32,23 @@ class ConvNet(nn.Module):
         return x
 
 class Trainer():
-    def __init__(self, output_size=4, patience=2, batch_size=64, device='cuda:0' if torch.cuda.is_available() else 'cpu', lambda_l2=1e-6, lambda_l1=1e-6, dropout_prob=0.2, lr=0.001):
+    def __init__(self, output_size=4, patience=2, batch_size=64, device=None, lambda_l2=1e-6, lambda_l1=1e-6, dropout_prob=0.2, lr=0.001):
+        if device is None:
+            if torch.cuda.is_available():
+                device = 'cuda:0'
+            elif hasattr(torch, 'xpu') and torch.xpu.is_available():
+                device = 'xpu:0'
+            else:
+                device = 'cpu'
+        self.device = device
         self.model = ConvNet(output_size=output_size, dropout_prob=dropout_prob).to(device)
         self.criterion = nn.CrossEntropyLoss()
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=lambda_l2)
         self.patience = patience
         self.batch_size = batch_size
-        self.device = device
         self.l1_lambda = lambda_l1
         self.best_val_loss = float('inf')
+        self.scaler = GradScaler() if str(self.device).startswith(('cuda', 'xpu')) else None
         torch.compile(self.model)
 
     def train(self, train_loader, val_loader, trial=None, early_stopping=True, progress_callback=None, batch_progress_callback=None):
@@ -49,7 +58,6 @@ class Trainer():
         self.val_loader = val_loader
         self.train_loader = train_loader
         self.loss_dict = {"trainLoss":[], "valLoss":[], "valAcc":[]}
-        batch = (0, len(self.train_loader))
 
         while True:
             self.model.train()
@@ -65,7 +73,7 @@ class Trainer():
                 train_loss += loss.item()
                 batch = (i+1, len(self.train_loader))
 
-                if batch_progress_callback and (i + 1) % max(1, len(self.train_loader) // 10) == 0:
+                if batch_progress_callback and (i + 1) % max(1, len(self.train_loader) // 100) == 0:
                     batch_progress_callback(epoch + 1, i + 1, len(self.train_loader), train_loss / (i + 1))
 
             train_loss /= len(self.train_loader)
