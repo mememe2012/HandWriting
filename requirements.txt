@@ -1,0 +1,6 @@
+torch
+torchvision
+numpy
+pygame
+Pillow
+psutil
