@@ -4,6 +4,7 @@ mememe[作者]
 	·本软件开发初衷是为了更快捷准确的训练卷积神经网络，作品仅供学习与参考。  
 	·违规使用造成的损失作者不承担。  
 	·所有解释权归作者所有。  
+	·MIT LICENSE。  
 	·当您使用本软件时，您已同意所有协议。  
 
 ## 模型结构
@@ -29,6 +30,7 @@ mememe[author]
 	·The purpose of this software is to provide a faster and more accurate way to train convolutional neural networks. The work is for learning and reference only.  
 	·Any damage caused by improper use will not be borne by the author.  
 	·All rights reserved by the author.  
+	·MIT LICENSE.  
 	·By using this software, you agree to all the terms of the license.  
 	
 ## Model Structure
