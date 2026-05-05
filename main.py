@@ -18,7 +18,6 @@ import sys
 import numpy as np
 import psutil
 import io
-
 # INIT
 SCREEN_SIZE = (1024, 768)
 COLORS = {
@@ -198,6 +197,9 @@ class DrawingApp:
             COLORS['warning'] = "#FFFF00"
 
         self.screen = pg.display.set_mode(SCREEN_SIZE)
+        
+        self.hwnd = pg.display.get_wm_info()['window']
+        print(f"Get Window Hwnd: {self.hwnd}")
 #-------------------------------------------------------
         with open("./index/save_data/config.json", "r") as f:
             self.config = json.load(f)
@@ -526,13 +528,12 @@ class DrawingApp:
             
             for file_name in file_list:
                 file_info = zip_ref.getinfo(file_name)
-                # 确保目标目录存在
                 target_dir = os.path.join("./models", os.path.dirname(file_name))
                 if not os.path.exists(target_dir):
                     os.makedirs(target_dir)
                 
                 with zip_ref.open(file_name) as source, open(os.path.join("./models", file_name), "wb") as target:
-                    # 使用 shutil.copyfileobj 进行解压，并实时更新进度
+
                     buffer_size = int(1024*1024*0.2)
                     while True:
                         buffer = source.read(buffer_size)
@@ -541,7 +542,6 @@ class DrawingApp:
                         target.write(buffer)
                         extracted_size += len(buffer)
                         
-                        # 更新进度
                         progress = (extracted_size / total_size) if total_size > 0 else 1.0
                         self.loading_text(self.lang["loading_model_progress"].format(extracted_size=self.show_file_size(extracted_size), total_size=self.show_file_size(total_size)), progress, init=init)
             
